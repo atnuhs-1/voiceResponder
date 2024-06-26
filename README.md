@@ -1,0 +1,2 @@
+# voiceResponder
+KotlinとPythonを使用した、音声認識に基づくインタラクティブな応答を提供するアプリケーション
