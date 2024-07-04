@@ -38,7 +38,7 @@ class AudioRecorderApp : JFrame() {
         }
 
         transcribeHelloButton.addActionListener {
-            transcribeHelloMp3()
+            transcribeFile("hello.mp3")
         }
 
         // Add components to the panel
@@ -79,6 +79,7 @@ class AudioRecorderApp : JFrame() {
                     return@thread
                 }
 
+                println("Recording started")
                 line = selectedMixer!!.getLine(dataLineInfo) as TargetDataLine
                 line?.open(format)
                 line?.start()
@@ -89,8 +90,7 @@ class AudioRecorderApp : JFrame() {
                 AudioSystem.write(audioInputStream, AudioFileFormat.Type.WAVE, wavFile)
                 statusLabel.text = "Recording saved to ${wavFile.absolutePath}"
 
-                // 録音が完了したと同時にPythonスクリプトを実行
-                runTranscribeScript(wavFile.absolutePath)
+                transcribeFile(wavFile.absolutePath)
 
             } catch (ex: LineUnavailableException) {
                 ex.printStackTrace()
@@ -103,48 +103,38 @@ class AudioRecorderApp : JFrame() {
     }
 
     private fun stopRecording() {
+        println("Recording stopped")
         line?.stop()
         line?.close()
         statusLabel.text = "Recording stopped"
     }
 
-    private fun transcribeHelloMp3() {
+    private fun transcribeFile(filePath: String) {
         thread {
             try {
-                statusLabel.text = "Transcribing hello.mp3..."
-                val processBuilder = ProcessBuilder("python3", "transcribe.py", "hello.mp3")
+                statusLabel.text = "Transcribing..."
+                val processBuilder = ProcessBuilder("python3", "transcribe.py", filePath)
                 processBuilder.redirectErrorStream(true)
                 val process = processBuilder.start()
                 val reader = process.inputStream.bufferedReader()
                 val output = reader.readText()
                 process.waitFor()
-                
-                // フィルタリングして警告メッセージを除去
-                val filteredOutput = output.lines()
-                    .filterNot { it.contains("UserWarning") || it.contains("FP16 is not supported on CPU; using FP32 instead") }
-                    .joinToString("\n")
-                
-                println(filteredOutput)
 
-                // Update transcription result label on the Event Dispatch Thread
+                val filteredOutput = filterWarnings(output)
+                
                 SwingUtilities.invokeLater {
                     transcriptionResultLabel.text = "Transcription Result: $filteredOutput"
                     statusLabel.text = "Transcription complete"
                 }
 
-                // Execute chat.py to get the response
-                val chatProcessBuilder = ProcessBuilder("python3", "chat.py", filteredOutput)
-                chatProcessBuilder.redirectErrorStream(true)
-                val chatProcess = chatProcessBuilder.start()
-                val chatReader = chatProcess.inputStream.bufferedReader()
-                val chatOutput = chatReader.readText()
-                chatProcess.waitFor()
+                val chatResponse = runChatScript(filteredOutput)
                 
-                // Update ollama result label on the Event Dispatch Thread
                 SwingUtilities.invokeLater {
-                    ollamaResultLabel.text = "Ollama Result: ${chatOutput.trim()}"
+                    ollamaResultLabel.text = "Ollama Result: ${chatResponse.trim()}"
                 }
-                
+
+                readAloud(chatResponse.trim())
+
             } catch (ex: IOException) {
                 ex.printStackTrace()
                 statusLabel.text = "Failed to run transcription script"
@@ -155,46 +145,48 @@ class AudioRecorderApp : JFrame() {
         }
     }
 
-    private fun runTranscribeScript(audioFilePath: String) {
+    private fun filterWarnings(output: String): String {
+        return output.lines()
+            .filterNot { it.contains("UserWarning") || it.contains("FP16 is not supported on CPU; using FP32 instead") }
+            .joinToString("\n")
+    }
+
+    private fun runChatScript(input: String): String {
+        return try {
+            val processBuilder = ProcessBuilder("python3", "chat.py", input)
+            processBuilder.redirectErrorStream(true)
+            val process = processBuilder.start()
+            val reader = process.inputStream.bufferedReader()
+            val output = reader.readText()
+            process.waitFor()
+            output
+        } catch (ex: IOException) {
+            ex.printStackTrace()
+            "Failed to run chat script"
+        } catch (ex: InterruptedException) {
+            ex.printStackTrace()
+            "Chat script interrupted"
+        }
+    }
+
+    private fun readAloud(text: String) {
         thread {
             try {
-                val processBuilder = ProcessBuilder("python3", "transcribe.py", audioFilePath)
+                println(text)
+                val processBuilder = ProcessBuilder("python3", "read_aloud.py", text)
                 processBuilder.redirectErrorStream(true)
                 val process = processBuilder.start()
                 val reader = process.inputStream.bufferedReader()
                 val output = reader.readText()
                 process.waitFor()
-                
-                // フィルタリングして警告メッセージを除去
-                val filteredOutput = output.lines()
-                    .filterNot { it.contains("UserWarning") || it.contains("FP16 is not supported on CPU; using FP32 instead") }
-                    .joinToString("\n")
-                
-                // Update transcription result label on the Event Dispatch Thread
-                SwingUtilities.invokeLater {
-                    transcriptionResultLabel.text = "Transcription Result: $filteredOutput"
-                    statusLabel.text = "Transcription complete"
-                }
-
-                // Execute chat.py to get the response
-                val chatProcessBuilder = ProcessBuilder("python3", "chat.py", filteredOutput)
-                chatProcessBuilder.redirectErrorStream(true)
-                val chatProcess = chatProcessBuilder.start()
-                val chatReader = chatProcess.inputStream.bufferedReader()
-                val chatOutput = chatReader.readText()
-                chatProcess.waitFor()
-                
-                // Update ollama result label on the Event Dispatch Thread
-                SwingUtilities.invokeLater {
-                    ollamaResultLabel.text = "Ollama Result: ${chatOutput.trim()}"
-                }
-                
+                println("complete")
             } catch (ex: IOException) {
                 ex.printStackTrace()
-                statusLabel.text = "Failed to run transcription script"
+                statusLabel.text = "Failed to run read_aloud script"
             } catch (ex: InterruptedException) {
                 ex.printStackTrace()
-                statusLabel.text = "Transcription script interrupted"
+                statusLabel.text = "Read aloud script interrupted"
+                println(ex)
             }
         }
     }
