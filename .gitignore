@@ -6,3 +6,6 @@ build
 
 # モデル
 swallow-7b-instruct.Q4_K_M.gguf
+
+# macOS Finder metadata files
+.DS_Store

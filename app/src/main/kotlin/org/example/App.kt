@@ -5,81 +5,116 @@ import javax.swing.*
 import kotlin.concurrent.thread
 import java.io.File
 import java.io.IOException
-import java.awt.GridLayout
 
 class AudioRecorderApp : JFrame() {
     private var line: TargetDataLine? = null
-    private val format = AudioFormat(44100.0f, 16, 1, true, true)
+    private val format = AudioFormat(44100.0f, 16, 1, true, false)
     private var selectedMixer: Mixer? = null
     private val statusLabel = JLabel("Status Label")
-    private val transcriptionResultLabel = JLabel("Transcription Result: ~~~~~~~~~~~~~")
-    private val ollamaResultLabel = JLabel("Ollama Result: ~~~~~~~~~~~~~")
+    private val statusValue = JLabel("")
+    private val transcriptionResultLabel = JLabel("Transcription Result:")
+    private val ollamaResultLabel = JLabel("Ollama Result:")
+    private val transcriptionResultValue = JLabel("")
+    private val ollamaResultValue = JLabel("")
     private val mixers = AudioSystem.getMixerInfo()
-    private val mixerComboBox = JComboBox(mixers.map { it.name }.toTypedArray())
+    private val selectMixerLabel = JLabel("Select Mixer:")
+    private val filteredMixers = mixers.filter { !it.name.startsWith("Port") }
+    private val mixerComboBox = JComboBox(filteredMixers.map { it.name }.toTypedArray())
+    private var recordingThread: Thread? = null
 
     init {
+        // ウィンドウの設定
         title = "Audio Recorder"
         defaultCloseOperation = EXIT_ON_CLOSE
         setSize(400, 400)
-
-        val panel = JPanel()
-        panel.layout = GridLayout(8, 2, 10, 10) // 8行2列のグリッドレイアウト
-
+        
+        // ボタンの作成
         val startButton = JButton("Start Recording")
         val stopButton = JButton("Stop Recording")
         val transcribeHelloButton = JButton("Transcribe hello.mp3")
 
-        startButton.addActionListener {
-            startRecording()
-        }
+        // ボタンにアクションリスナーを追加
+        startButton.addActionListener { startRecording() }
+        stopButton.addActionListener { stopRecording() }
+        transcribeHelloButton.addActionListener { transcribeFile("hello.mp3") }
 
-        stopButton.addActionListener {
-            stopRecording()
-        }
+        // レイアウトの設定
+        setupLayout(startButton, stopButton, transcribeHelloButton)
+    }
 
-        transcribeHelloButton.addActionListener {
-            transcribeFile("hello.mp3")
-        }
+    private fun setupLayout(startButton: JButton, stopButton: JButton, transcribeHelloButton: JButton) {
+        val layout = GroupLayout(contentPane)
+        contentPane.layout = layout
+        layout.setAutoCreateGaps(true)
+        layout.setAutoCreateContainerGaps(true)
 
-        // Add components to the panel
-        panel.add(JLabel("Select Mixer:"))
-        panel.add(mixerComboBox)
-        panel.add(startButton)
-        panel.add(stopButton)
-        panel.add(transcribeHelloButton)
-        panel.add(statusLabel)
-        panel.add(JLabel()) // 空白セルを追加して整列
-        panel.add(transcriptionResultLabel)
-        panel.add(JLabel()) // 空白セルを追加して整列
-        panel.add(ollamaResultLabel)
-        panel.add(JLabel()) // 空白セルを追加して整列
+        // 水平方向のグループ設定
+        layout.setHorizontalGroup(layout.createSequentialGroup()
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.LEADING)
+                .addComponent(selectMixerLabel)
+                .addComponent(startButton)
+                .addComponent(statusLabel)
+                .addComponent(transcriptionResultLabel)
+                .addComponent(ollamaResultLabel))
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.LEADING)
+                .addComponent(mixerComboBox)
+                .addGroup(layout.createSequentialGroup()
+                    .addComponent(stopButton)
+                    .addComponent(transcribeHelloButton))
+                .addComponent(statusValue)
+                .addComponent(transcriptionResultValue)
+                .addComponent(ollamaResultValue))
+        )
 
-        add(panel)
+        // 垂直方向のグループ設定
+        layout.setVerticalGroup(layout.createSequentialGroup()
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(selectMixerLabel)
+                .addComponent(mixerComboBox))
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(startButton)
+                .addComponent(stopButton)
+                .addComponent(transcribeHelloButton))
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(statusLabel)
+                .addComponent(statusValue))
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(transcriptionResultLabel)
+                .addComponent(transcriptionResultValue))
+            .addGroup(layout.createParallelGroup(GroupLayout.Alignment.BASELINE)
+                .addComponent(ollamaResultLabel)
+                .addComponent(ollamaResultValue))
+        )
+
+        // ウィンドウのサイズを自動調整
+        pack()
         isVisible = true
     }
 
     private fun startRecording() {
-        thread {
+        // 録音を新しいスレッドで開始
+        recordingThread = thread {
             try {
-                statusLabel.text = "Recording..."
+                updateStatus("Recording...")
                 val selectedMixerIndex = mixerComboBox.selectedIndex
-                selectedMixer = AudioSystem.getMixer(mixers[selectedMixerIndex])
+                val actualMixerInfo = filteredMixers[selectedMixerIndex]
+                selectedMixer = AudioSystem.getMixer(actualMixerInfo)
 
+                // ミキサーを開く
                 try {
                     selectedMixer!!.open()
                 } catch (e: LineUnavailableException) {
-                    statusLabel.text = "Selected mixer not supported."
+                    updateStatus("Selected mixer not supported.")
                     return@thread
                 }
 
                 val dataLineInfo = DataLine.Info(TargetDataLine::class.java, format)
-
                 if (!selectedMixer!!.isLineSupported(dataLineInfo)) {
-                    statusLabel.text = "Selected mixer does not support the specified format."
+                    updateStatus("Selected mixer does not support the specified format.")
                     return@thread
                 }
 
-                println("Recording started")
+                // ターゲットデータラインを取得して開始
                 line = selectedMixer!!.getLine(dataLineInfo) as TargetDataLine
                 line?.open(format)
                 line?.start()
@@ -87,77 +122,82 @@ class AudioRecorderApp : JFrame() {
                 val audioInputStream = AudioInputStream(line)
                 val wavFile = File("recording.wav")
 
-                AudioSystem.write(audioInputStream, AudioFileFormat.Type.WAVE, wavFile)
-                statusLabel.text = "Recording saved to ${wavFile.absolutePath}"
-
-                transcribeFile(wavFile.absolutePath)
-
+                // 録音データをファイルに保存
+                saveRecording(audioInputStream, wavFile)
             } catch (ex: LineUnavailableException) {
                 ex.printStackTrace()
-                statusLabel.text = "Recording failed: Line unavailable"
-            } catch (ex: IOException) {
-                ex.printStackTrace()
-                statusLabel.text = "Recording failed: IO Exception"
+                updateStatus("Recording failed: Line unavailable")
             }
         }
     }
 
+    private fun saveRecording(audioInputStream: AudioInputStream, wavFile: File) {
+        try {
+            AudioSystem.write(audioInputStream, AudioFileFormat.Type.WAVE, wavFile)
+            updateStatus("Recording saved to ${wavFile.absolutePath}")
+            transcribeFile(wavFile.absolutePath)
+        } catch (ex: IOException) {
+            ex.printStackTrace()
+            updateStatus("Recording failed: IO Exception")
+        }
+    }
+
     private fun stopRecording() {
+        // 録音を停止
         println("Recording stopped")
         line?.stop()
         line?.close()
-        statusLabel.text = "Recording stopped"
+        updateStatus("Recording stopped")
+        recordingThread?.join()  // スレッドが終了するのを待つ
     }
 
     private fun transcribeFile(filePath: String) {
+        // 新しいスレッドで転写処理を開始
         thread {
             try {
-                statusLabel.text = "Transcribing..."
+                updateStatus("Transcribing...")
                 val processBuilder = ProcessBuilder("python3", "transcribe.py", filePath)
                 processBuilder.redirectErrorStream(true)
                 val process = processBuilder.start()
-                val reader = process.inputStream.bufferedReader()
-                val output = reader.readText()
+                val output = process.inputStream.bufferedReader().readText()
                 process.waitFor()
 
                 val filteredOutput = filterWarnings(output)
-                
                 SwingUtilities.invokeLater {
-                    transcriptionResultLabel.text = "Transcription Result: $filteredOutput"
-                    statusLabel.text = "Transcription complete"
+                    transcriptionResultValue.text = filteredOutput
+                    updateStatus("Transcription complete")
                 }
 
                 val chatResponse = runChatScript(filteredOutput)
-                
                 SwingUtilities.invokeLater {
-                    ollamaResultLabel.text = "Ollama Result: ${chatResponse.trim()}"
+                    ollamaResultValue.text = chatResponse.trim()
                 }
 
                 readAloud(chatResponse.trim())
-
             } catch (ex: IOException) {
                 ex.printStackTrace()
-                statusLabel.text = "Failed to run transcription script"
+                updateStatus("Failed to run transcription script")
             } catch (ex: InterruptedException) {
                 ex.printStackTrace()
-                statusLabel.text = "Transcription script interrupted"
+                updateStatus("Transcription script interrupted")
             }
         }
     }
 
     private fun filterWarnings(output: String): String {
+        // 出力から警告メッセージをフィルタリング
         return output.lines()
             .filterNot { it.contains("UserWarning") || it.contains("FP16 is not supported on CPU; using FP32 instead") }
             .joinToString("\n")
     }
 
     private fun runChatScript(input: String): String {
+        // チャットスクリプトを実行
         return try {
             val processBuilder = ProcessBuilder("python3", "chat.py", input)
             processBuilder.redirectErrorStream(true)
             val process = processBuilder.start()
-            val reader = process.inputStream.bufferedReader()
-            val output = reader.readText()
+            val output = process.inputStream.bufferedReader().readText()
             process.waitFor()
             output
         } catch (ex: IOException) {
@@ -170,24 +210,29 @@ class AudioRecorderApp : JFrame() {
     }
 
     private fun readAloud(text: String) {
+        // 読み上げスクリプトを実行
         thread {
             try {
-                println(text)
                 val processBuilder = ProcessBuilder("python3", "read_aloud.py", text)
                 processBuilder.redirectErrorStream(true)
                 val process = processBuilder.start()
-                val reader = process.inputStream.bufferedReader()
-                val output = reader.readText()
+                process.inputStream.bufferedReader().readText()
                 process.waitFor()
                 println("complete")
             } catch (ex: IOException) {
                 ex.printStackTrace()
-                statusLabel.text = "Failed to run read_aloud script"
+                updateStatus("Failed to run read_aloud script")
             } catch (ex: InterruptedException) {
                 ex.printStackTrace()
-                statusLabel.text = "Read aloud script interrupted"
-                println(ex)
+                updateStatus("Read aloud script interrupted")
             }
+        }
+    }
+
+    private fun updateStatus(message: String) {
+        // ステータスを更新
+        SwingUtilities.invokeLater {
+            statusValue.text = message
         }
     }
 }
