@@ -155,6 +155,10 @@ class AudioRecorderApp : JFrame() {
         // 新しいスレッドで転写処理を開始
         thread {
             try {
+                SwingUtilities.invokeLater {
+                    ollamaResultValue.text = ""
+                    transcriptionResultValue.text = ""
+                }
                 updateStatus("Transcribing...")
                 val processBuilder = ProcessBuilder("python3", "transcribe.py", filePath)
                 processBuilder.redirectErrorStream(true)
